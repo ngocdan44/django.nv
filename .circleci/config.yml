@@ -16,16 +16,20 @@ jobs:
       - run: |
           pip install -r requirements.txt
           python manage.py test taskManager
-     
-  release:
-    machine: true                                        # What is this for?
+
+  oast:
+    machine: true
     steps:
       - checkout
 
-      - run: |
-          echo $DOCKERHUB_PASSWORD | docker login -u $DOCKERHUB_USERNAME --password-stdin
-          docker build -t $DOCKER_USERNAME/django.nv .   # Build the application into Docker image
-          docker push $DOCKER_USERNAME/django.nv         # Push the image into registry
+      - run:
+          command: docker run -v $(pwd):/src --rm hysnsec/safety check -r /src/requirements.txt --json | tee oast-results.json
+          when: on_fail             # Even if the job fails, continue to the next stages
+
+      - store_artifacts:
+          path: oast-results.json
+          destination: safety-artifact
+          when: always
 
   integration:
     docker:
@@ -36,7 +40,7 @@ jobs:
           command: |
             echo "This is an integration step"
             exit 1
-          when: on_fail      # Even if the job fails, continue to the next jobs
+          when: on_fail                    # Even if the job fails, continue to the next stages
 
   prod:
     docker:
@@ -45,57 +49,21 @@ jobs:
       - checkout
       - run: echo "This is a deploy step"
 
-  artifact:
-    docker:
-      - image: python:3.6
-    steps:
-      - checkout
-      - run: echo "hello" > hello.txt
-      - store_artifacts:
-          path: hello.txt
-          destination: artifact-file
-
 workflows:
   version: 2
   django:
     jobs:
-      - build:
-          filters:          # Run the job with a specific branch
-            branches:
-              only:
-                - main
+      - build
       - test:
           requires:
             - build
-          filters:
-            branches:
-              only:
-                - main
-      - release:
-          requires:
-            - build
-          filters:
-            branches:
-              only:
-                - main
-      - integration:
+      - oast:
           requires:
             - test
-          filters:
-            branches:
-              only:
-                - main
+      - integration:
+          requires:
+            - oast
       - prod:
+          type: approval
           requires:
             - integration
-          filters:
-            branches:
-              only:
-                - main
-      - artifact:
-          requires:
-            - prod
-          filters:
-            branches:
-              only:
-                - main
